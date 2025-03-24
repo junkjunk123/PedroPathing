@@ -1438,4 +1438,8 @@ public class Follower {
     public double getHeadingError() {
         return headingError;
     }
+
+    public void setGuardAgainstFlying(boolean guardAgainstFlying) {
+        poseUpdater.getLocalizer().setGuardAgainstFlying(guardAgainstFlying);
+    }
 }

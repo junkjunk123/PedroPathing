@@ -109,4 +109,6 @@ public abstract class Localizer {
      * @return returns if any component of the robot's position is NaN
      */
     public abstract boolean isNAN();
+
+    public abstract void setGuardAgainstFlying(boolean guardAgainstFlying);
 }

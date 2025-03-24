@@ -61,6 +61,7 @@ public class PinpointLocalizer extends Localizer {
     private Pose currentVelocity;
     private Pose pinpointPose;
     private boolean pinpointCooked = false;
+    private boolean guardAgainstFlying = false;
 
     /**
      * This creates a new PinpointLocalizer from a HardwareMap, with a starting Pose at (0,0)
@@ -281,6 +282,12 @@ public class PinpointLocalizer extends Localizer {
             pinpointCooked = true;
         }
 
+        if (guardAgainstFlying) {
+            if (Math.abs(currentPose.getHeading() - heading) > 0.3) {
+                heading = currentPose.getHeading();
+            }
+        }
+
         return new Pose(x, y, heading);
     }
 
@@ -291,5 +298,13 @@ public class PinpointLocalizer extends Localizer {
      */
     public boolean isNAN() {
         return pinpointCooked;
+    }
+
+    public void setGuardAgainstFlying(boolean guardAgainstFlying) {
+        this.guardAgainstFlying = guardAgainstFlying;
+    }
+
+    public boolean getGuardAgainstFlying() {
+        return guardAgainstFlying;
     }
 }
