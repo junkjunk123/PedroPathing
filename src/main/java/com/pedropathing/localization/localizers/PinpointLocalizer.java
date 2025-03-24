@@ -285,6 +285,7 @@ public class PinpointLocalizer extends Localizer {
         if (guardAgainstFlying) {
             if (Math.abs(currentPose.getHeading() - heading) > 0.3) {
                 heading = currentPose.getHeading();
+                odo.setPosition(new Pose(x, y, heading));
             }
         }
 

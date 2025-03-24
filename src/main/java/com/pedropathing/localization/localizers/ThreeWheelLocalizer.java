@@ -300,4 +300,9 @@ public class ThreeWheelLocalizer extends Localizer {
     public boolean isNAN() {
         return Double.isNaN(getPose().getX()) || Double.isNaN(getPose().getY()) || Double.isNaN(getPose().getHeading());
     }
+
+    @Override
+    public void setGuardAgainstFlying(boolean guardAgainstFlying) {
+
+    }
 }
