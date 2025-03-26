@@ -17,6 +17,7 @@ import com.pedropathing.localization.Pose;
 import com.pedropathing.pathgen.MathFunctions;
 import com.pedropathing.pathgen.Vector;
 import com.pedropathing.util.NanoTimer;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 /**
  * This is the ThreeWheelIMULocalizer class. This class extends the Localizer superclass and is a
@@ -61,16 +62,17 @@ public class ThreeWheelIMULocalizer extends Localizer {
     private Pose leftEncoderPose;
     private Pose rightEncoderPose;
     private Pose strafeEncoderPose;
-
+    public ElapsedTime IMUTimer = new ElapsedTime();
     public final IMU imu;
     private double previousIMUOrientation;
+    private double wheelDeltaRadians;
+    private double previousWheelOrientation;
     private double deltaRadians;
     private double totalHeading;
     public static double FORWARD_TICKS_TO_INCHES;
     public static double STRAFE_TICKS_TO_INCHES;
     public static double TURN_TICKS_TO_RADIANS;
-
-    public static boolean useIMU = true;
+    public static boolean useIMU = false;
 
     /**
      * This creates a new ThreeWheelIMULocalizer from a HardwareMap, with a starting Pose at (0,0)
@@ -117,7 +119,8 @@ public class ThreeWheelIMULocalizer extends Localizer {
         displacementPose = new Pose();
         currentVelocity = new Pose();
         totalHeading = 0;
-
+        previousIMUOrientation = 0;
+        previousWheelOrientation = 0;
         resetEncoders();
     }
 
@@ -128,7 +131,7 @@ public class ThreeWheelIMULocalizer extends Localizer {
      */
     @Override
     public Pose getPose() {
-        return MathFunctions.addPoses(startPose, displacementPose);
+        return MathFunctions.addPoses(startPose, MathFunctions.rotatePose(displacementPose, startPose.getHeading(), false));
     }
 
     /**
@@ -184,7 +187,7 @@ public class ThreeWheelIMULocalizer extends Localizer {
      */
     @Override
     public void setPose(Pose setPose) {
-        displacementPose = MathFunctions.subtractPoses(setPose, startPose);
+        displacementPose = MathFunctions.subtractPoses(MathFunctions.rotatePose(setPose, -startPose.getHeading(), false), startPose);
         resetEncoders();
     }
 
@@ -197,6 +200,11 @@ public class ThreeWheelIMULocalizer extends Localizer {
     public void update() {
         deltaTimeNano = timer.getElapsedTime();
         timer.resetTimer();
+
+        if (IMUTimer.milliseconds() > 400) {
+            IMUTimer.reset();
+            useIMU = true;
+        }
 
         updateEncoders();
         Matrix robotDeltas = getRobotDeltas();
@@ -221,9 +229,10 @@ public class ThreeWheelIMULocalizer extends Localizer {
         globalDeltas = Matrix.multiply(Matrix.multiply(prevRotationMatrix, transformation), robotDeltas);
 
         displacementPose.add(new Pose(globalDeltas.get(0, 0), globalDeltas.get(1, 0), globalDeltas.get(2, 0)));
-        currentVelocity = new Pose(globalDeltas.get(0, 0) / (deltaTimeNano / Math.pow(10.0, 9)), globalDeltas.get(1, 0) / (deltaTimeNano / Math.pow(10.0, 9)), globalDeltas.get(2, 0) / (deltaTimeNano / Math.pow(10.0, 9)));
+        currentVelocity = new Pose(globalDeltas.get(0, 0) / (deltaTimeNano / Math.pow(10.0, 9)), globalDeltas.get(1, 0) / (deltaTimeNano / Math.pow(10.0, 9)), wheelDeltaRadians / (deltaTimeNano / Math.pow(10.0, 9)));
 
         totalHeading += globalDeltas.get(2, 0);
+        useIMU = false;
     }
 
     /**
@@ -234,9 +243,11 @@ public class ThreeWheelIMULocalizer extends Localizer {
         rightEncoder.update();
         strafeEncoder.update();
 
-        double currentIMUOrientation = MathFunctions.normalizeAngle(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
-        deltaRadians = MathFunctions.getTurnDirection(previousIMUOrientation, currentIMUOrientation) * MathFunctions.getSmallestAngleDifference(currentIMUOrientation, previousIMUOrientation);
-        previousIMUOrientation = currentIMUOrientation;
+        if (useIMU) {
+            double currentIMUOrientation = MathFunctions.normalizeAngle(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
+            deltaRadians = MathFunctions.getTurnDirection(previousWheelOrientation, currentIMUOrientation) * MathFunctions.getSmallestAngleDifference(currentIMUOrientation, previousIMUOrientation);
+            previousIMUOrientation = currentIMUOrientation;
+        }
     }
 
     /**
@@ -246,6 +257,8 @@ public class ThreeWheelIMULocalizer extends Localizer {
         leftEncoder.reset();
         rightEncoder.reset();
         strafeEncoder.reset();
+        IMUTimer.reset();
+        imu.resetYaw();
     }
 
     /**
@@ -261,11 +274,16 @@ public class ThreeWheelIMULocalizer extends Localizer {
         //y/strafe movement
         returnMatrix.set(1,0, STRAFE_TICKS_TO_INCHES * (strafeEncoder.getDeltaPosition() - strafeEncoderPose.getX() * ((rightEncoder.getDeltaPosition() - leftEncoder.getDeltaPosition()) / (leftEncoderPose.getY() - rightEncoderPose.getY()))));
         // theta/turning
-        if (MathFunctions.getSmallestAngleDifference(0, deltaRadians) > 0.00005 && useIMU) {
-            returnMatrix.set(2, 0, deltaRadians);
-        } else {
-            returnMatrix.set(2,0, TURN_TICKS_TO_RADIANS * ((rightEncoder.getDeltaPosition() - leftEncoder.getDeltaPosition()) / (leftEncoderPose.getY() - rightEncoderPose.getY())));
+
+        wheelDeltaRadians = TURN_TICKS_TO_RADIANS * ((rightEncoder.getDeltaPosition() - leftEncoder.getDeltaPosition()) / (leftEncoderPose.getY() - rightEncoderPose.getY()));
+        previousWheelOrientation += wheelDeltaRadians;
+
+        if (!(MathFunctions.getSmallestAngleDifference(0, deltaRadians) > 0.00005 && useIMU)) {
+            deltaRadians = wheelDeltaRadians;
         }
+
+        returnMatrix.set(2, 0, deltaRadians);
+
         return returnMatrix;
     }
 
