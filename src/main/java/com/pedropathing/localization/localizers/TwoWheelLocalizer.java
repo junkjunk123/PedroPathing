@@ -3,11 +3,6 @@ package com.pedropathing.localization.localizers;
 import com.acmerobotics.dashboard.config.Config;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
-import com.qualcomm.robotcore.hardware.IMU;
-
-import static com.pedropathing.localization.constants.TwoWheelConstants.*;
-
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import com.pedropathing.localization.Encoder;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.localization.Matrix;
@@ -15,10 +10,12 @@ import com.pedropathing.localization.Pose;
 import com.pedropathing.pathgen.MathFunctions;
 import com.pedropathing.pathgen.Vector;
 import com.pedropathing.util.NanoTimer;
+import com.pedropathing.localization.GoBildaPinpointDriver;
+
 
 /**
- * This is the TwoWheelLocalizer class. This class extends the Localizer superclass and is a
- * localizer that uses the two wheel odometry with IMU set up. The diagram below, which is modified from
+ * This is the TwoWheelPinpointIMULocalizer class. This class extends the Localizer superclass and is a
+ * localizer that uses the two wheel odometry with the Pinpoint IMU set up. The diagram below, which is modified from
  * Road Runner, shows a typical set up.
  *
  * The view is from the top of the robot looking downwards.
@@ -27,7 +24,7 @@ import com.pedropathing.util.NanoTimer;
  *
  * forward on robot is the x positive direction
  *
-*                         forward (x positive)
+ *                         forward (x positive)
  *                                △
  *                                |
  *                                |
@@ -35,18 +32,20 @@ import com.pedropathing.util.NanoTimer;
  *                         |              |
  *                         |              |
  *                         |           || |
- *  left (y positive) <--- |           || |  
+ *  left (y positive) <--- |           || |
  *                         |     ____     |
  *                         |     ----     |
  *                         \--------------/
  *
  * @author Anyi Lin - 10158 Scott's Bots
- * @version 1.0, 4/2/2024
+ * @author Havish Sripada - 12808 RevAmped Robotics
+ * @author Baron Henderson - 20077 The Indubitables
+ * @version 1.0, 11/28/2024
  */
-
+@Config
 public class TwoWheelLocalizer extends Localizer {
     private HardwareMap hardwareMap;
-    private IMU imu;
+    private GoBildaPinpointDriver pinpoint;
     private Pose startPose;
     private Pose displacementPose;
     private Pose currentVelocity;
@@ -57,11 +56,11 @@ public class TwoWheelLocalizer extends Localizer {
     private Encoder strafeEncoder;
     private Pose forwardEncoderPose;
     private Pose strafeEncoderPose;
-    private double previousIMUOrientation;
+    private double previousHeading;
     private double deltaRadians;
     private double totalHeading;
-    public static double FORWARD_TICKS_TO_INCHES;
-    public static double STRAFE_TICKS_TO_INCHES;
+    public static double FORWARD_TICKS_TO_INCHES = 0.002;
+    public static double STRAFE_TICKS_TO_INCHES = 0.002;
 
     /**
      * This creates a new TwoWheelLocalizer from a HardwareMap, with a starting Pose at (0,0)
@@ -77,34 +76,33 @@ public class TwoWheelLocalizer extends Localizer {
      * This creates a new TwoWheelLocalizer from a HardwareMap and a Pose, with the Pose
      * specifying the starting pose of the localizer.
      *
-     * @param map the HardwareMap
+     * @param map          the HardwareMap
      * @param setStartPose the Pose to start from
      */
     public TwoWheelLocalizer(HardwareMap map, Pose setStartPose) {
-        FORWARD_TICKS_TO_INCHES = forwardTicksToInches;
-        STRAFE_TICKS_TO_INCHES = strafeTicksToInches;
-
-        forwardEncoderPose = new Pose(0, forwardY, 0);
-        strafeEncoderPose = new Pose(strafeX, 0, Math.toRadians(90));
+        // TODO: replace these with your encoder positions
+        forwardEncoderPose = new Pose(0, 0.75, 0);
+        strafeEncoderPose = new Pose(-6.6, 0, Math.toRadians(90));
 
         hardwareMap = map;
 
-        imu = hardwareMap.get(IMU.class, IMU_HardwareMapName);
-        imu.initialize(new IMU.Parameters(IMU_Orientation));
+        pinpoint = hardwareMap.get(GoBildaPinpointDriver.class, "pinpoint");
+        pinpoint.resetPosAndIMU();
 
-        forwardEncoder = new Encoder(hardwareMap.get(DcMotorEx.class, forwardEncoder_HardwareMapName));
-        strafeEncoder = new Encoder(hardwareMap.get(DcMotorEx.class, strafeEncoder_HardwareMapName));
+        // TODO: replace these with your encoder ports
+        forwardEncoder = new Encoder(hardwareMap.get(DcMotorEx.class, "motor_rb"));
+        strafeEncoder = new Encoder(hardwareMap.get(DcMotorEx.class, "motor_lb"));
 
-        forwardEncoder.setDirection(forwardEncoderDirection);
-        strafeEncoder.setDirection(strafeEncoderDirection);
+        // TODO: reverse any encoders necessary
+        forwardEncoder.setDirection(Encoder.FORWARD);
+        strafeEncoder.setDirection(Encoder.FORWARD);
 
         setStartPose(setStartPose);
         timer = new NanoTimer();
         deltaTimeNano = 1;
         displacementPose = new Pose();
         currentVelocity = new Pose();
-
-        previousIMUOrientation = MathFunctions.normalizeAngle(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
+        previousHeading = startPose.getHeading();
         deltaRadians = 0;
     }
 
@@ -115,7 +113,7 @@ public class TwoWheelLocalizer extends Localizer {
      */
     @Override
     public Pose getPose() {
-        return MathFunctions.addPoses(startPose, displacementPose);
+        return new Pose(startPose.getX()+displacementPose.getX(), startPose.getY()+displacementPose.getY(),displacementPose.getHeading());
     }
 
     /**
@@ -155,7 +153,7 @@ public class TwoWheelLocalizer extends Localizer {
      * @param heading the rotation of the Matrix
      */
     public void setPrevRotationMatrix(double heading) {
-        prevRotationMatrix = new Matrix(3,3);
+        prevRotationMatrix = new Matrix(3, 3);
         prevRotationMatrix.set(0, 0, Math.cos(heading));
         prevRotationMatrix.set(0, 1, -Math.sin(heading));
         prevRotationMatrix.set(1, 0, Math.sin(heading));
@@ -190,7 +188,7 @@ public class TwoWheelLocalizer extends Localizer {
         Matrix globalDeltas;
         setPrevRotationMatrix(getPose().getHeading());
 
-        Matrix transformation = new Matrix(3,3);
+        Matrix transformation = new Matrix(3, 3);
         if (Math.abs(robotDeltas.get(2, 0)) < 0.001) {
             transformation.set(0, 0, 1.0 - (Math.pow(robotDeltas.get(2, 0), 2) / 6.0));
             transformation.set(0, 1, -robotDeltas.get(2, 0) / 2.0);
@@ -220,9 +218,10 @@ public class TwoWheelLocalizer extends Localizer {
         forwardEncoder.update();
         strafeEncoder.update();
 
-        double currentIMUOrientation = MathFunctions.normalizeAngle(imu.getRobotYawPitchRollAngles().getYaw(AngleUnit.RADIANS));
-        deltaRadians = MathFunctions.getTurnDirection(previousIMUOrientation, currentIMUOrientation) * MathFunctions.getSmallestAngleDifference(currentIMUOrientation, previousIMUOrientation);
-        previousIMUOrientation = currentIMUOrientation;
+        pinpoint.update(GoBildaPinpointDriver.readData.ONLY_UPDATE_HEADING);
+        double currentHeading = startPose.getHeading() + MathFunctions.normalizeAngle(pinpoint.getHeading());
+        deltaRadians = MathFunctions.getTurnDirection(previousHeading, currentHeading) * MathFunctions.getSmallestAngleDifference(currentHeading, previousHeading);
+        previousHeading = currentHeading;
     }
 
     /**
@@ -240,13 +239,13 @@ public class TwoWheelLocalizer extends Localizer {
      * @return returns a Matrix containing the robot relative movement.
      */
     public Matrix getRobotDeltas() {
-        Matrix returnMatrix = new Matrix(3,1);
+        Matrix returnMatrix = new Matrix(3, 1);
         // x/forward movement
-        returnMatrix.set(0,0, FORWARD_TICKS_TO_INCHES * (forwardEncoder.getDeltaPosition() - forwardEncoderPose.getY() * deltaRadians));
+        returnMatrix.set(0, 0, FORWARD_TICKS_TO_INCHES * (forwardEncoder.getDeltaPosition() - forwardEncoderPose.getY() * deltaRadians));
         //y/strafe movement
-        returnMatrix.set(1,0, STRAFE_TICKS_TO_INCHES * (strafeEncoder.getDeltaPosition() - strafeEncoderPose.getX() * deltaRadians));
+        returnMatrix.set(1, 0, STRAFE_TICKS_TO_INCHES * (strafeEncoder.getDeltaPosition() - strafeEncoderPose.getX() * deltaRadians));
         // theta/turning
-        returnMatrix.set(2,0, deltaRadians);
+        returnMatrix.set(2, 0, deltaRadians);
         return returnMatrix;
     }
 
@@ -293,31 +292,36 @@ public class TwoWheelLocalizer extends Localizer {
     /**
      * This resets the IMU.
      */
-    public void resetIMU() {
-        imu.resetYaw();
-    }
 
-    /**
-     * This is returns the IMU.
-     *
-     * @return returns the IMU
-     */
     @Override
-    public IMU getIMU() {
-        return imu;
+    public void resetIMU() throws InterruptedException {
+        pinpoint.recalibrateIMU();
+
+        try {
+            Thread.sleep(300);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 
-    /**
-     * This returns whether if any component of robot's position is NaN.
-     *
-     * @return returns whether the robot's position is NaN
-     */
+    @Override
     public boolean isNAN() {
-        return Double.isNaN(getPose().getX()) || Double.isNaN(getPose().getY()) || Double.isNaN(getPose().getHeading());
+        return false;
     }
 
     @Override
-    public void setGuardAgainstFlying(boolean guardAgainstFlying) {
+    public void setGuardAgainstFlying(boolean guardAgainstFlying) {}
 
+    /**
+     * This resets the pinpoint.
+     */
+    private void resetPinpoint() throws InterruptedException{
+        pinpoint.resetPosAndIMU();
+
+        try {
+            Thread.sleep(300);
+        } catch (InterruptedException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

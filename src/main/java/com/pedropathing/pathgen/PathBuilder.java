@@ -1,6 +1,9 @@
 package com.pedropathing.pathgen;
 
+import com.pedropathing.follower.FollowerConstants;
+
 import java.util.ArrayList;
+import java.util.Collections;
 
 /**
  * This is the PathBuilder class. This class makes it easier to create PathChains, so you don't have
@@ -17,6 +20,12 @@ public class PathBuilder {
     private ArrayList<Path> paths = new ArrayList<>();
     private PathChain.DecelerationType decelerationType = PathChain.DecelerationType.LAST_PATH;
     private ArrayList<PathCallback> callbacks = new ArrayList<>();
+    private double decelerationStartMultiplier = FollowerConstants.decelerationStartMultiplier;
+    private boolean globalLinearHeadingInterpolation = false;
+    private double globalStartHeading = 0;
+    private double globalEndHeading = 0;
+    private double percentPathStart = 0;
+    private boolean reversedLinearInterpol = false;
 
     /**
      * This is an empty constructor for the PathBuilder class so it can get started.
@@ -253,6 +262,12 @@ public class PathBuilder {
         PathChain returnChain = new PathChain(paths);
         returnChain.setCallbacks(callbacks);
         returnChain.setDecelerationType(decelerationType);
+        returnChain.setDecelerationStartMultiplier(decelerationStartMultiplier);
+
+        if (globalLinearHeadingInterpolation) {
+            computeGlobalLinearHeading(returnChain);
+        }
+
         return returnChain;
     }
 
@@ -265,10 +280,79 @@ public class PathBuilder {
     }
 
     /**
+     * Makes this decelerate based on the entire chain and not only the last path (recommended if the last path is short)
+     */
+    public PathBuilder setGlobalDeceleration(double decelerationStartMultiplier) {
+        this.decelerationType = PathChain.DecelerationType.GLOBAL;
+        this.decelerationStartMultiplier = decelerationStartMultiplier;
+        return this;
+    }
+
+    /**
      * Sets no deceleration to the pathchain
      */
     public PathBuilder setNoDeceleration() {
         this.decelerationType = PathChain.DecelerationType.NONE;
         return this;
+    }
+
+    public PathBuilder setGlobalLinearHeadingInterpolation(double startHeading, double endHeading) {
+        return setGlobalLinearHeadingInterpolation(startHeading, endHeading, 0);
+    }
+
+    public PathBuilder setGlobalLinearHeadingInterpolation(double startHeading, double endHeading, double percentPathStart) {
+        return setGlobalLinearHeadingInterpolation(startHeading, endHeading, percentPathStart, false);
+    }
+
+    public PathBuilder setGlobalLinearHeadingInterpolation(double startHeading, double endHeading, double percentPathStart, boolean reversed) {
+        globalLinearHeadingInterpolation = true;
+        this.percentPathStart = MathFunctions.clamp(percentPathStart, 0, 1);
+        this.globalStartHeading = MathFunctions.normalizeAngle(startHeading);
+        this.globalEndHeading = MathFunctions.normalizeAngle(endHeading);
+        reversedLinearInterpol = reversed;
+
+        return this;
+    }
+
+    private void computeGlobalLinearHeading(PathChain pathChain) {
+        double turnRadians;
+
+        if (!reversedLinearInterpol) {
+            turnRadians = MathFunctions.getSmallestAngleDifference(globalStartHeading, globalEndHeading) * MathFunctions.getTurnDirection(globalStartHeading, globalEndHeading);
+        } else {
+            turnRadians = -MathFunctions.getSmallestAngleDifference(globalStartHeading, globalEndHeading) * MathFunctions.getTurnDirection(globalStartHeading, globalEndHeading);
+        }
+
+        if (turnRadians == 0) {
+            for (int i = 0; i < pathChain.size(); i++) {
+                pathChain.getPath(i).setConstantHeadingInterpolation(globalStartHeading);
+            }
+
+            return;
+        }
+
+        double sumLength = 0;
+        int index;
+
+        for (index = pathChain.size() - 1; index >= 0 && sumLength < pathChain.length() * percentPathStart; index--) {
+            sumLength += pathChain.getPath(index).length();
+        }
+
+        double firstPathLength = pathChain.getPath(index).length();
+        double firstPercentage = 1-(sumLength - pathChain.length() * percentPathStart - firstPathLength)/firstPathLength;
+        double firstPathHeadingDelta = firstPathLength / pathChain.length() / percentPathStart * turnRadians;
+        pathChain.getPath(index).setLinearHeadingInterpolation(globalStartHeading, globalStartHeading + firstPathHeadingDelta, firstPercentage);
+
+        double turnedRadians = firstPathHeadingDelta;
+        for (int i = 0; i < pathChain.size(); i++) {
+            if (i < index) {
+                pathChain.getPath(i).setConstantHeadingInterpolation(globalStartHeading);
+            } else if (i > index) {
+                Path path = pathChain.getPath(i);
+                double pathDelta = path.length() / pathChain.length() * turnRadians;
+                path.setLinearHeadingInterpolation(globalStartHeading + turnedRadians, globalStartHeading + turnedRadians + pathDelta);
+                turnedRadians += pathDelta;
+            }
+        }
     }
 }
